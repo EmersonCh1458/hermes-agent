@@ -138,15 +138,6 @@ def _locales_dir() -> Path:
     return source_dir
 
 
-def _user_locales_dir() -> Path:
-    """Return the user locale overlay directory (~/.hermes/locale/).
-
-    This directory is outside the Hermes repo and survives ``hermes update``.
-    """
-    import hermes_constants
-    return Path(hermes_constants.get_hermes_home()) / "locale"
-
-
 def _normalize_lang(value: Any) -> str:
     """Normalize a user-supplied language value to a supported code.
 
@@ -174,6 +165,13 @@ def _normalize_lang(value: Any) -> str:
 def _load_catalog(lang: str) -> dict[str, str]:
     """Load and flatten one locale YAML file into a dotted-key dict.
 
+    Resolution order (later wins):
+    1. Official catalog from ``locales/<lang>.yaml`` in the repo.
+    2. User overlay from ``~/.hermes/locale/<lang>.yaml``.
+
+    User overlays survive ``hermes update`` and let the user add or override
+    translations without touching the shipped catalogs.
+
     YAML files can be nested for human readability; this produces the flat
     key space :func:`t` expects.  Cached per-language for the process.
     """
@@ -182,37 +180,32 @@ def _load_catalog(lang: str) -> dict[str, str]:
         if cached is not None:
             return cached
 
-    path = _locales_dir() / f"{lang}.yaml"
-    if not path.is_file():
-        logger.debug("i18n catalog missing for %s at %s", lang, path)
-        with _catalog_lock:
-            _catalog_cache[lang] = {}
-        return {}
-
-    try:
-        import yaml  # PyYAML is already a hermes dependency
-        with path.open("r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
-    except Exception as exc:
-        logger.warning("Failed to load i18n catalog %s: %s", path, exc)
-        with _catalog_lock:
-            _catalog_cache[lang] = {}
-        return {}
+    import yaml  # PyYAML is already a hermes dependency
 
     flat: dict[str, str] = {}
-    _flatten_into(raw, "", flat)
 
-    # User locale overlay: ~/.hermes/locale/<lang>.yaml overrides official keys.
-    # This lets users maintain translations that survive `hermes update`.
-    user_catalog_path = _user_locales_dir() / f"{lang}.yaml"
-    if user_catalog_path.is_file():
+    # 1. Official catalog from the repo.
+    official_path = _locales_dir() / f"{lang}.yaml"
+    if official_path.is_file():
         try:
-            import yaml
-            with user_catalog_path.open("r", encoding="utf-8") as f:
+            with official_path.open("r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            _flatten_into(raw, "", flat)
+        except Exception as exc:
+            logger.warning("Failed to load official i18n catalog %s: %s", official_path, exc)
+    else:
+        logger.debug("Official i18n catalog missing for %s at %s", lang, official_path)
+
+    # 2. User overlay from ~/.hermes/locale/ (survives hermes update).
+    hermes_home = os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+    user_path = Path(hermes_home) / "locale" / f"{lang}.yaml"
+    if user_path.is_file():
+        try:
+            with user_path.open("r", encoding="utf-8") as f:
                 user_raw = yaml.safe_load(f) or {}
             _flatten_into(user_raw, "", flat)
         except Exception as exc:
-            logger.debug("Failed to load user locale %s: %s", user_catalog_path, exc)
+            logger.warning("Failed to load user i18n overlay %s: %s", user_path, exc)
 
     with _catalog_lock:
         _catalog_cache[lang] = flat

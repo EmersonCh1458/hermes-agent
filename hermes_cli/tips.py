@@ -481,20 +481,22 @@ TIPS = [
 def get_random_tip(exclude_recent: int = 0) -> str:
     """Return a random tip string.
 
+    If the active language is Chinese (zh) and a tips_zh.txt file exists
+    under HERMES_HOME/locale/, reads from that file instead of the built-in
+    English TIPS list. Falls back gracefully on any error.
+
     Args:
         exclude_recent: not used currently; reserved for future
             deduplication across sessions.
     """
     try:
         from agent.i18n import get_language
-        lang = get_language()
-        if lang and lang != "en":
-            p = Path(get_hermes_home()) / "locale" / f"tips_{lang}.txt"
-            if p.exists():
-                external_tips = [l.strip() for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
-                if external_tips:
-                    return random.choice(external_tips)
+        if get_language() == "zh":
+            tips_path = Path(get_hermes_home()) / "locale" / "tips_zh.txt"
+            if tips_path.exists():
+                tips = [t.strip() for t in tips_path.read_text().splitlines() if t.strip()]
+                if tips:
+                    return random.choice(tips)
     except Exception:
         pass
     return random.choice(TIPS)
-

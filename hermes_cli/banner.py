@@ -11,10 +11,9 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 from hermes_constants import get_hermes_home
-from agent.i18n import t as _t
 from typing import TYPE_CHECKING, Dict, List, Optional
+from agent.i18n import t as _t
 
 # rich and prompt_toolkit are imported lazily (inside the functions that use
 # them) rather than at module level.  Importing this module is on the TUI
@@ -123,53 +122,6 @@ _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600
 UPDATE_AVAILABLE_NO_COUNT = -1
 
 _UPSTREAM_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
-_OFFICIAL_REPO_CANONICAL = "github.com/nousresearch/hermes-agent"
-
-
-def _canonical_github_remote(url: str | None) -> str:
-    """Return ``host/owner/repo`` for common GitHub remote URL forms."""
-    if not url:
-        return ""
-    value = url.strip()
-    if value.startswith("git@github.com:"):
-        value = "github.com/" + value[len("git@github.com:"):]
-    elif value.startswith("ssh://git@github.com/"):
-        value = "github.com/" + value[len("ssh://git@github.com/"):]
-    else:
-        parsed = urlparse(value)
-        if parsed.netloc and parsed.path:
-            value = f"{parsed.netloc}{parsed.path}"
-    value = value.strip().rstrip("/")
-    if value.endswith(".git"):
-        value = value[:-4]
-    return value.lower()
-
-
-def _is_ssh_remote(url: str | None) -> bool:
-    if not url:
-        return False
-    value = url.strip().lower()
-    return value.startswith("git@") or value.startswith("ssh://")
-
-
-def _is_official_ssh_remote(url: str | None) -> bool:
-    return _is_ssh_remote(url) and _canonical_github_remote(url) == _OFFICIAL_REPO_CANONICAL
-
-
-def _git_stdout(args: list[str], *, cwd: Path, timeout: int = 5) -> Optional[str]:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(cwd),
-        )
-    except Exception:
-        return None
-    if result.returncode != 0:
-        return None
-    return (result.stdout or "").strip()
 
 
 def _check_via_rev(local_rev: str) -> Optional[int]:
@@ -195,11 +147,6 @@ def _check_via_rev(local_rev: str) -> Optional[int]:
 
 def _check_via_local_git(repo_dir: Path) -> Optional[int]:
     """Count commits behind origin/main in a local checkout."""
-    origin_url = _git_stdout(["remote", "get-url", "origin"], cwd=repo_dir)
-    if _is_official_ssh_remote(origin_url):
-        head_rev = _git_stdout(["rev-parse", "HEAD"], cwd=repo_dir)
-        return _check_via_rev(head_rev) if head_rev else None
-
     try:
         subprocess.run(
             ["git", "fetch", "origin", "--quiet"],
@@ -488,8 +435,8 @@ def format_banner_version_label() -> str:
     if ahead <= 0 or upstream == local:
         return f"{base} · upstream {upstream}"
 
-    carried_word = "commit" if ahead == 1 else "commits"
-    return f"{base} · upstream {upstream} · local {local} (+{ahead} carried {carried_word})"
+    carried_word = _t("banner.commit_singular") if ahead == 1 else _t("banner.commit_plural")
+    return _t("banner.version_with_carried", base=base, upstream=upstream, local=local, ahead=ahead, word=carried_word)
 
 
 # =========================================================================
@@ -601,6 +548,22 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
     session_color = _skin_color("session_border", "#8B8682")
 
     # Use skin's custom caduceus art if provided
+    _t_cat = {}
+    try:
+        _lang = "en"
+        try:
+            from agent.i18n import get_language
+            _lang = get_language() or "en"
+        except Exception:
+            pass
+        _p = Path(get_hermes_home()) / "locale" / f"commands_{_lang}.json"
+        if _p.exists():
+            import json
+            _t_cat_raw = json.loads(_p.read_text())
+            # Only keep category keys
+            _t_cat = {k.split("skills.")[1]: v for k, v in _t_cat_raw.items() if k.startswith("__category.skills.")}
+    except Exception:
+        pass
     try:
         from hermes_cli.skin_engine import get_active_skin
         _bskin = get_active_skin()
@@ -694,26 +657,15 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         right_lines.append("")
         right_lines.append(f"[bold {accent}]{_t('banner.mcp_servers')}[/]")
         for srv in mcp_status:
-            status = srv.get("status")
             if srv["connected"]:
                 right_lines.append(
                     f"[dim {dim}]{srv['name']}[/] [{text}]({srv['transport']})[/] "
-                    f"[dim {dim}]—[/] [{text}]{srv['tools']} tool(s)[/]"
+                    f"[dim {dim}]—[/] [{text}]{srv['tools']} {_t('banner.tools_count')}[/]"
                 )
-            elif srv.get("disabled") or status == "disabled":
+            elif srv.get("disabled"):
                 right_lines.append(
                     f"[dim {dim}]{srv['name']}[/] [dim]({srv['transport']})[/] "
                     f"[dim {dim}]— {_t('banner.disabled')}[/]"
-                )
-            elif status == "connecting":
-                right_lines.append(
-                    f"[dim {dim}]{srv['name']}[/] [dim]({srv['transport']})[/] "
-                    f"[yellow]— connecting[/]"
-                )
-            elif status == "configured":
-                right_lines.append(
-                    f"[dim {dim}]{srv['name']}[/] [dim]({srv['transport']})[/] "
-                    f"[dim {dim}]— configured[/]"
                 )
             else:
                 right_lines.append(
@@ -736,7 +688,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
                 skills_str = ", ".join(skill_names)
             if len(skills_str) > 50:
                 skills_str = skills_str[:47] + "..."
-            right_lines.append(f"[dim {dim}]{category}:[/] [{text}]{skills_str}[/]")
+            right_lines.append(f"[dim {dim}]{_t_cat.get(category, category)}:[/] [{text}]{skills_str}[/]")
     else:
         right_lines.append(f"[dim {dim}]{_t('banner.no_skills')}[/]")
 
@@ -778,16 +730,17 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             if behind > 0:
                 commits_word = _t("banner.commit_singular") if behind == 1 else _t("banner.commit_plural")
                 right_lines.append(
-                    _t("banner.commits_behind", count=behind, word=commits_word, cmd=recommended_update_command())
+                    _t("banner.n_commits_behind", count=behind, word=commits_word)
+                    + f"[dim yellow] — {_t('banner.run_to_update', cmd=recommended_update_command())}[/]"
                 )
             else:
                 # UPDATE_AVAILABLE_NO_COUNT: nix-built hermes; we know an update
                 # exists but not by how much, and we don't know how the user
                 # installed it (nix run, profile, system flake, home-manager).
                 managed_cmd = get_managed_update_command()
-                line = "[bold yellow]⚠ update available[/]"
+                line = _t('banner.update_available')
                 if managed_cmd:
-                    line += f"[dim yellow] — run [bold]{managed_cmd}[/bold][/]"
+                    line += f"[dim yellow] — {_t('banner.run_to_update', cmd=managed_cmd)}[/]"
                 right_lines.append(line)
     except Exception:
         pass  # Never break the banner over an update check
@@ -800,9 +753,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         from hermes_cli.config import detect_install_method
         if detect_install_method() == "pip":
             right_lines.append(
-                "[bold yellow]⚠ pip install not officially supported[/]"
-                "[dim yellow] — exists for reasons other than user install; "
-                "expect instability and an inability to support issues[/]"
+                _t('banner.pip_warning')
             )
     except Exception:
         pass  # Never break the banner over the install-method check

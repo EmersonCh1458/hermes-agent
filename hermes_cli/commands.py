@@ -161,6 +161,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("busy", "Control what Enter does while Hermes is working", "Configuration",
                cli_only=True, args_hint="[queue|steer|interrupt|status]",
                subcommands=("queue", "steer", "interrupt", "status")),
+    CommandDef("lang", "Show or change the display language", "Configuration",
+               args_hint="[code]"),
+               # subcommands are populated dynamically at runtime by
+               # _get_lang_subcommands() -- see SlashCommandCompleter
 
     # Tools & Skills
     CommandDef("tools", "Manage tools: /tools [list|disable|enable] [name...]", "Tools & Skills",
@@ -181,11 +185,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("cron", "Manage scheduled tasks", "Tools & Skills",
                cli_only=True, args_hint="[subcommand]",
                subcommands=("list", "add", "create", "edit", "pause", "resume", "run", "remove")),
-    CommandDef("suggestions", "Review suggested automations (accept/dismiss)",
-               "Tools & Skills", aliases=("suggest",), args_hint="[accept|dismiss N | catalog]",
-               subcommands=("accept", "dismiss", "catalog", "clear")),
-    CommandDef("blueprint", "Set up an automation from a blueprint template",
-               "Tools & Skills", aliases=("bp",), args_hint="[name] [slot=value ...]"),
     CommandDef("curator", "Background skill maintenance (status, run, pin, archive, list-archived)",
                "Tools & Skills", args_hint="[subcommand]",
                subcommands=("status", "run", "pause", "resume", "pin", "unpin", "restore", "list-archived")),
@@ -216,7 +215,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("restart", "Gracefully restart the gateway after draining active runs", "Session",
                gateway_only=True),
     CommandDef("usage", "Show token usage and rate limits for the current session", "Info"),
-    CommandDef("credits", "Show Nous credit balance and top up", "Info"),
     CommandDef("insights", "Show usage insights and analytics", "Info",
                args_hint="[days]"),
     CommandDef("platforms", "Show gateway/messaging platform status", "Info",
@@ -1033,30 +1031,6 @@ _SLACK_RESERVED_COMMANDS = frozenset({
     "topic", "mute", "pro", "shortcuts",
 })
 
-# High-value aliases that must survive Slack's 50-slash cap even when the
-# registry fills up. Without this, adding a new canonical command silently
-# clamps off low-priority aliases (they're added in the second pass), so a
-# long-standing native slash like /btw could disappear just because an
-# unrelated command landed. These claim their slots right after /hermes,
-# ahead of both canonical names and the rest of the aliases. Anything not
-# listed here still degrades gracefully (reachable via /hermes <command>).
-# Keep this list TIGHT: every pinned alias takes a slot a canonical command
-# would otherwise get, and the Telegram-parity test fails when a canonical
-# gets clamped ("reset" was unpinned for exactly that — /new keeps its
-# native slot, the alias spelling stays reachable via /hermes reset).
-_SLACK_PRIORITY_ALIASES = ("btw", "bg")
-
-# Canonical commands intentionally NOT given a native Slack slash slot. Slack
-# caps apps at 50 slash commands and the registry is at that ceiling; rather
-# than let the clamp silently drop whichever command sorts last (and break
-# Telegram parity), we explicitly route a few low-frequency commands through
-# ``/hermes <command>`` on Slack only. They remain native on every other
-# surface (CLI, TUI, Telegram, Discord). Keep this list TIGHT and intentional —
-# the telegram-parity test reads it so an entry here is a deliberate
-# "Slack-via-/hermes" decision, not a silent clamp.
-#   - credits: the billing/top-up surface; reached via /hermes credits on Slack.
-_SLACK_VIA_HERMES_ONLY = frozenset({"credits"})
-
 
 def _sanitize_slack_name(raw: str) -> str:
     """Convert a command name to a valid Slack slash command name.
@@ -1105,29 +1079,11 @@ def slack_native_slashes() -> list[tuple[str, str, str]]:
             return
         if slack_name in _SLACK_RESERVED_COMMANDS:
             return
-        if slack_name in _SLACK_VIA_HERMES_ONLY:
-            # Intentionally Slack-via-/hermes only (see _SLACK_VIA_HERMES_ONLY).
-            return
         if len(entries) >= _SLACK_MAX_SLASH_COMMANDS:
             return
         # Slack description cap is 2000 chars; keep it short.
         entries.append((slack_name, desc[:140], hint[:100]))
         seen.add(slack_name)
-
-    # Priority pass: pin high-value aliases (e.g. /btw, /bg, /reset) ahead of
-    # everything except /hermes, so a new canonical command can never silently
-    # clamp them off the 50-slash cap. Each alias borrows its parent command's
-    # description and hint.
-    _alias_to_cmd = {
-        alias: cmd
-        for cmd in COMMAND_REGISTRY
-        if _is_gateway_available(cmd, overrides)
-        for alias in cmd.aliases
-    }
-    for alias in _SLACK_PRIORITY_ALIASES:
-        cmd = _alias_to_cmd.get(alias)
-        if cmd is not None:
-            _add(alias, f"Alias for /{cmd.name} — {cmd.description}", cmd.args_hint or "")
 
     # First pass: canonical names (so they win slots if we hit the cap).
     for cmd in COMMAND_REGISTRY:
@@ -1791,6 +1747,26 @@ class SlashCommandCompleter(Completer):
                 yield from self._handoff_completions(sub_text, sub_lower)
                 return
 
+            if base_cmd == "/lang":
+                _lang_codes = []
+                _loc = Path(get_hermes_home()) / "locale"
+                if _loc.exists():
+                    import re
+                    _lang_codes = sorted(set(
+                        f.stem for f in _loc.glob("*.yaml")
+                        if re.match(r'^[a-z]{2}(-[a-z]{2,})?$', f.stem)
+                    ))
+                if "en" not in _lang_codes:
+                    _lang_codes.insert(0, "en")
+                for sub in _lang_codes:
+                    if sub.startswith(sub_lower) and sub != sub_lower:
+                        yield Completion(
+                            sub,
+                            start_position=-len(sub_text),
+                            display=sub,
+                        )
+                return
+
             # Static subcommand completions
             if " " not in sub_text and base_cmd in SUBCOMMANDS and self._command_allowed(base_cmd):
                 for sub in SUBCOMMANDS[base_cmd]:
@@ -1804,19 +1780,16 @@ class SlashCommandCompleter(Completer):
 
         word = text[1:]
 
-        # Load translated command descriptions from user locale
         _t_cmd = {}
         try:
             from agent.i18n import get_language
-            if get_language() not in (None, "", "en"):
-                lang = get_language()
-                _p = Path(get_hermes_home()) / "locale" / f"commands_{lang}.json"
+            if get_language() == "zh":
+                _p = Path(get_hermes_home()) / "locale" / "commands_zh.json"
                 if _p.exists():
                     import json
-                    _t_cmd = json.loads(_p.read_text(encoding="utf-8"))
+                    _t_cmd = json.loads(_p.read_text())
         except Exception:
             pass
-
 
         for cmd, desc in COMMANDS.items():
             if not self._command_allowed(cmd):
@@ -1840,7 +1813,7 @@ class SlashCommandCompleter(Completer):
                     self._completion_text(cmd_name, word),
                     start_position=-len(word),
                     display=cmd,
-                    display_meta=f"▣ {short_desc} ({skill_count} skills)",
+                    display_meta=f"▣ {_t_cmd.get(cmd, short_desc)} ({skill_count} {_t_cmd.get('__count.skills', 'skills')})",
                 )
 
         for cmd, info in self._iter_skill_commands().items():
@@ -1852,7 +1825,7 @@ class SlashCommandCompleter(Completer):
                     self._completion_text(cmd_name, word),
                     start_position=-len(word),
                     display=cmd,
-                    display_meta=f"⚡ {short_desc}",
+                    display_meta=f"⚡ {_t_cmd.get(cmd, short_desc)}",
                 )
 
         # Plugin-registered slash commands

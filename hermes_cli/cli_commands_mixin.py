@@ -1255,57 +1255,6 @@ class CLICommandsMixin:
         print(f"(._.) Unknown cron command: {subcommand}")
         print("  Available: list, add, edit, pause, resume, run, remove")
 
-    def _handle_suggestions_command(self, cmd: str):
-        """Handle /suggestions — review/accept/dismiss suggested automations.
-
-        Delegates to the shared handler so CLI and gateway never drift. CLI
-        origin is the local platform so an accepted job's "origin" delivery
-        resolves to a configured home channel.
-        """
-        import shlex
-
-        try:
-            tokens = shlex.split(cmd)[1:] if cmd else []
-        except ValueError:
-            tokens = (cmd or "").split()[1:]
-        args = " ".join(tokens)
-        try:
-            from hermes_cli.suggestions_cmd import handle_suggestions_command
-            output = handle_suggestions_command(args)
-        except Exception as e:
-            output = f"Suggestions command failed: {e}"
-        self._console_print(output)
-
-    def _handle_blueprint_command(self, cmd: str):
-        """Handle /blueprint — set up an automation from a blueprint template.
-
-        Delegates to the shared handler. A bare ``/blueprint`` lists the
-        catalog; ``/blueprint <name>`` name-matches a blueprint and seeds the
-        agent to ask the user for each value conversationally (the result's
-        ``agent_seed``); ``/blueprint <name> slot=val …`` creates the job
-        directly. When a seed is returned it is stashed as a one-shot pending
-        message the interactive loop runs as the next agent turn.
-        """
-        import shlex
-
-        try:
-            tokens = shlex.split(cmd)[1:] if cmd else []
-        except ValueError:
-            tokens = (cmd or "").split()[1:]
-        args = " ".join(shlex.quote(t) for t in tokens)
-        try:
-            from hermes_cli.blueprint_cmd import handle_blueprint_command
-            result = handle_blueprint_command(args)
-        except Exception as e:
-            self._console_print(f"Cron blueprint command failed: {e}")
-            return
-        self._console_print(result.text)
-        seed = getattr(result, "agent_seed", None)
-        if seed:
-            # One-shot: the interactive loop picks this up right after the
-            # slash command returns and runs it as a normal agent turn.
-            self._pending_agent_seed = seed
-
     def _handle_curator_command(self, cmd: str):
         """Handle /curator slash command.
 
@@ -2245,40 +2194,58 @@ class CLICommandsMixin:
             /lang               Show current language and available options
             /lang <code>        Set language (auto-detected from locale files)
         """
+        print("DEBUG: _handle_lang_command called", flush=True)
         from cli import _ACCENT, _DIM, _RST, _cprint
         from pathlib import Path
         from hermes_constants import get_hermes_home
+        import re
 
         locale_dir = Path(get_hermes_home()) / "locale"
         tui_dir = Path(get_hermes_home()) / "tui-locale"
 
-        # Scan for available languages from locale files
+        # Scan for available languages from YAML locale files
         available = set()
         if locale_dir.exists():
             for f in locale_dir.glob("*.yaml"):
                 code = f.stem
-                if code != "en":
+                # Only accept valid language codes (2 letters, or xx-xx like zh-hant)
+                if re.match(r'^[a-z]{2}(-[a-z]{2,})?$', code) and code != "en":
                     available.add(code)
         if tui_dir.exists():
             for f in tui_dir.glob("*.json"):
                 available.add(f.stem)
+
+        # Always include English + detect zh
         available.add("en")
         available.discard("commands")
 
         valid_codes = sorted(available) if available else ["en", "zh"]
+        # DEBUG: show actual scanned codes
+        _cprint(f"  {_DIM}Detected: {valid_codes}{_RST}")
         lang_names = {
-            "en": "English", "zh": "中文", "ja": "日本語",
-            "ko": "한국어", "de": "Deutsch", "fr": "Fran\u00e7ais",
-            "es": "Espa\u00f1ol", "pt": "Portugu\u00eas",
-            "ru": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
-            "ar": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629",
-            "th": "\u0e44\u0e17\u0e22", "vi": "Ti\u1ebfng Vi\u1ec7t",
-            "it": "Italiano", "nl": "Nederlands", "pl": "Polski",
-            "tr": "T\u00fcrk\u00e7e", "uk": "\u0423\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430",
+            "en": "English",
+            "zh": "中文",
+            "ja": "日本語",
+            "ko": "한국어",
+            "de": "Deutsch",
+            "fr": "Français",
+            "es": "Español",
+            "pt": "Português",
+            "ru": "Русский",
+            "ar": "العربية",
+            "th": "ไทย",
+            "vi": "Tiếng Việt",
+            "it": "Italiano",
+            "nl": "Nederlands",
+            "pl": "Polski",
+            "tr": "Türkçe",
+            "uk": "Українська",
         }
 
         parts = cmd.strip().split(maxsplit=1)
+
         if len(parts) < 2:
+            # Show current language
             from agent.i18n import get_language
             current = get_language() or "en"
             current_name = lang_names.get(current, current)
@@ -2286,10 +2253,12 @@ class CLICommandsMixin:
             _cprint(f"  {_DIM}Available:{_RST}")
             for code in valid_codes:
                 name = lang_names.get(code, code)
-                mark = "  " if code != current else "\u2713"
-                _cprint(f"  {_DIM}  {mark} {code:<4} {name}{_RST}")
+                if code == current:
+                    _cprint(f"  {_ACCENT}  ✓ {code:<4} {name}{_RST}")
+                else:
+                    _cprint(f"  {_DIM}    {code:<4} {name}{_RST}")
             _cprint(f"  {_DIM}Set with: /lang <code>{_RST}")
-            _cprint(f"  {_DIM}Language change takes effect after /reset{_RST}")
+            _cprint(f"  {_DIM}Language change takes effect after restarting Hermes{_RST}")
             return
 
         code = parts[1].strip().lower()
@@ -2299,13 +2268,16 @@ class CLICommandsMixin:
             return
 
         from cli import save_config_value
-        save_config_value("display", "language", code)
+        save_config_value("display.language", code)
+        # Clear i18n cache so subsequent _t() calls use the new language
+        from agent.i18n import reset_language_cache
+        reset_language_cache()
         name = lang_names.get(code, code)
         _cprint(f"  {_ACCENT}Language set to: {code} ({name}){_RST}")
-        _cprint(f"  {_DIM}Run /reset to apply the language change{_RST}")
+        _cprint(f"  {_DIM}The banner and tips will show the new language after restarting Hermes{_RST}")
+        _cprint(f"  {_DIM}Type /quit to exit, then run `hermes` again{_RST}")
 
     def _handle_voice_command(self, command: str):
-
         """Handle /voice [on|off|tts|status] command."""
         from cli import _cprint
         parts = command.strip().split(maxsplit=1)
