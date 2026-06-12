@@ -1,6 +1,8 @@
 """Random tips shown at CLI session start to help users discover features."""
 
 import random
+from pathlib import Path
+from hermes_constants import get_hermes_home
 
 
 # ---------------------------------------------------------------------------
@@ -483,4 +485,16 @@ def get_random_tip(exclude_recent: int = 0) -> str:
         exclude_recent: not used currently; reserved for future
             deduplication across sessions.
     """
+    try:
+        from agent.i18n import get_language
+        lang = get_language()
+        if lang and lang != "en":
+            p = Path(get_hermes_home()) / "locale" / f"tips_{lang}.txt"
+            if p.exists():
+                external_tips = [l.strip() for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+                if external_tips:
+                    return random.choice(external_tips)
+    except Exception:
+        pass
     return random.choice(TIPS)
+

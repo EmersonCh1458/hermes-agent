@@ -2238,7 +2238,74 @@ class CLICommandsMixin:
         self._pending_relaunch = ["update"]
         return True
 
+    def _handle_lang_command(self, cmd: str):
+        """Handle /lang — show or change the display language.
+
+        Usage:
+            /lang               Show current language and available options
+            /lang <code>        Set language (auto-detected from locale files)
+        """
+        from cli import _ACCENT, _DIM, _RST, _cprint
+        from pathlib import Path
+        from hermes_constants import get_hermes_home
+
+        locale_dir = Path(get_hermes_home()) / "locale"
+        tui_dir = Path(get_hermes_home()) / "tui-locale"
+
+        # Scan for available languages from locale files
+        available = set()
+        if locale_dir.exists():
+            for f in locale_dir.glob("*.yaml"):
+                code = f.stem
+                if code != "en":
+                    available.add(code)
+        if tui_dir.exists():
+            for f in tui_dir.glob("*.json"):
+                available.add(f.stem)
+        available.add("en")
+        available.discard("commands")
+
+        valid_codes = sorted(available) if available else ["en", "zh"]
+        lang_names = {
+            "en": "English", "zh": "中文", "ja": "日本語",
+            "ko": "한국어", "de": "Deutsch", "fr": "Fran\u00e7ais",
+            "es": "Espa\u00f1ol", "pt": "Portugu\u00eas",
+            "ru": "\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
+            "ar": "\u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+            "th": "\u0e44\u0e17\u0e22", "vi": "Ti\u1ebfng Vi\u1ec7t",
+            "it": "Italiano", "nl": "Nederlands", "pl": "Polski",
+            "tr": "T\u00fcrk\u00e7e", "uk": "\u0423\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430",
+        }
+
+        parts = cmd.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            from agent.i18n import get_language
+            current = get_language() or "en"
+            current_name = lang_names.get(current, current)
+            _cprint(f"  {_ACCENT}Current language: {current} ({current_name}){_RST}")
+            _cprint(f"  {_DIM}Available:{_RST}")
+            for code in valid_codes:
+                name = lang_names.get(code, code)
+                mark = "  " if code != current else "\u2713"
+                _cprint(f"  {_DIM}  {mark} {code:<4} {name}{_RST}")
+            _cprint(f"  {_DIM}Set with: /lang <code>{_RST}")
+            _cprint(f"  {_DIM}Language change takes effect after /reset{_RST}")
+            return
+
+        code = parts[1].strip().lower()
+        if code not in valid_codes:
+            _cprint(f"  {_DIM}(._.) Unsupported language: {code}{_RST}")
+            _cprint(f"  {_DIM}Available: {', '.join(f'{c} ({lang_names.get(c,c)})' for c in valid_codes)}{_RST}")
+            return
+
+        from cli import save_config_value
+        save_config_value("display", "language", code)
+        name = lang_names.get(code, code)
+        _cprint(f"  {_ACCENT}Language set to: {code} ({name}){_RST}")
+        _cprint(f"  {_DIM}Run /reset to apply the language change{_RST}")
+
     def _handle_voice_command(self, command: str):
+
         """Handle /voice [on|off|tts|status] command."""
         from cli import _cprint
         parts = command.strip().split(maxsplit=1)

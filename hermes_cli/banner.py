@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 from hermes_constants import get_hermes_home
+from agent.i18n import t as _t
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 # rich and prompt_toolkit are imported lazily (inside the functions that use
@@ -613,17 +614,17 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         model_short = model_short[:-5]
     if len(model_short) > 28:
         model_short = model_short[:25] + "..."
-    ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-    left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]")
+    ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} {_t('banner.context')}[/]" if context_length else ""
+    left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]{_t('banner.nous_research')}[/]")
 
     if os.getenv("HERMES_YOLO_MODE"):
-        left_lines.append(f"[bold red]⚠ YOLO mode[/] [dim {dim}]— all approval prompts bypassed[/]")
+        left_lines.append(f"[bold red]{_t('banner.yolo_mode')}[/] [dim {dim}]— {_t('banner.yolo_desc')}[/]")
     left_lines.append(f"[dim {dim}]{cwd}[/]")
     if session_id:
-        left_lines.append(f"[dim {session_color}]Session: {session_id}[/]")
+        left_lines.append(f"[dim {session_color}]{_t('banner.session')}: {session_id}[/]")
     left_content = "\n".join(left_lines)
 
-    right_lines = [f"[bold {accent}]Available Tools[/]"]
+    right_lines = [f"[bold {accent}]{_t('banner.available_tools')}[/]"]
     toolsets_dict: Dict[str, list] = {}
 
     for tool in tools:
@@ -680,7 +681,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         right_lines.append(f"[dim {dim}]{toolset}:[/] {tools_str}")
 
     if remaining_toolsets > 0:
-        right_lines.append(f"[dim {dim}](and {remaining_toolsets} more toolsets...)[/]")
+        right_lines.append(f"[dim {dim}]{_t('banner.and_more_toolsets', count=remaining_toolsets)}[/]")
 
     # MCP Servers section (only if configured)
     try:
@@ -691,7 +692,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
 
     if mcp_status:
         right_lines.append("")
-        right_lines.append(f"[bold {accent}]MCP Servers[/]")
+        right_lines.append(f"[bold {accent}]{_t('banner.mcp_servers')}[/]")
         for srv in mcp_status:
             status = srv.get("status")
             if srv["connected"]:
@@ -702,7 +703,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             elif srv.get("disabled") or status == "disabled":
                 right_lines.append(
                     f"[dim {dim}]{srv['name']}[/] [dim]({srv['transport']})[/] "
-                    f"[dim {dim}]— disabled[/]"
+                    f"[dim {dim}]— {_t('banner.disabled')}[/]"
                 )
             elif status == "connecting":
                 right_lines.append(
@@ -717,11 +718,11 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             else:
                 right_lines.append(
                     f"[red]{srv['name']}[/] [dim]({srv['transport']})[/] "
-                    f"[red]— failed[/]"
+                    f"[red]— {_t('banner.failed')}[/]"
                 )
 
     right_lines.append("")
-    right_lines.append(f"[bold {accent}]Available Skills[/]")
+    right_lines.append(f"[bold {accent}]{_t('banner.available_skills')}[/]")
     skills_by_category = get_available_skills()
     total_skills = sum(len(s) for s in skills_by_category.values())
 
@@ -730,21 +731,21 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             skill_names = sorted(skills_by_category[category])
             if len(skill_names) > 8:
                 display_names = skill_names[:8]
-                skills_str = ", ".join(display_names) + f" +{len(skill_names) - 8} more"
+                skills_str = ", ".join(display_names) + _t('banner.and_more', count=len(skill_names) - 8)
             else:
                 skills_str = ", ".join(skill_names)
             if len(skills_str) > 50:
                 skills_str = skills_str[:47] + "..."
             right_lines.append(f"[dim {dim}]{category}:[/] [{text}]{skills_str}[/]")
     else:
-        right_lines.append(f"[dim {dim}]No skills installed[/]")
+        right_lines.append(f"[dim {dim}]{_t('banner.no_skills')}[/]")
 
     right_lines.append("")
     mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
-    summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
+    summary_parts = [_t('banner.n_tools', count=len(tools)), _t('banner.n_skills', count=total_skills)]
     if mcp_connected:
-        summary_parts.append(f"{mcp_connected} MCP servers")
-    summary_parts.append("/help for commands")
+        summary_parts.append(_t('banner.n_mcp_servers', count=mcp_connected))
+    summary_parts.append(_t('banner.help_for_commands'))
     # Indicate when the codex_app_server runtime is active so users
     # understand why tool counts may not match what's actually reachable
     # (codex builds its own tool list inside the spawned subprocess).
@@ -753,8 +754,8 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         from hermes_cli.config import load_config as _load_cfg
         if get_current_runtime(_load_cfg()) == "codex_app_server":
             right_lines.append(
-                f"[bold {accent}]Runtime:[/] [{text}]codex app-server[/] "
-                f"[dim {dim}](terminal/file ops/MCP run inside codex)[/]"
+                f"[bold {accent}]{_t('banner.runtime')}:[/] [{text}]codex app-server[/] "
+                f"[dim {dim}]({_t('banner.runtime_desc')})[/]"
             )
     except Exception:
         pass
@@ -775,10 +776,9 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         if behind is not None and behind != 0:
             from hermes_cli.config import get_managed_update_command, recommended_update_command
             if behind > 0:
-                commits_word = "commit" if behind == 1 else "commits"
+                commits_word = _t("banner.commit_singular") if behind == 1 else _t("banner.commit_plural")
                 right_lines.append(
-                    f"[bold yellow]⚠ {behind} {commits_word} behind[/]"
-                    f"[dim yellow] — run [bold]{recommended_update_command()}[/bold] to update[/]"
+                    _t("banner.commits_behind", count=behind, word=commits_word, cmd=recommended_update_command())
                 )
             else:
                 # UPDATE_AVAILABLE_NO_COUNT: nix-built hermes; we know an update

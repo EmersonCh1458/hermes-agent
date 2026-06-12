@@ -52,6 +52,7 @@ os.environ["HERMES_QUIET"] = "1"  # Our own modules
 import yaml
 
 from hermes_cli.fallback_config import get_fallback_chain
+from agent.i18n import t as _t
 from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 from hermes_cli.cli_commands_mixin import CLICommandsMixin
 
@@ -5594,13 +5595,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
                     f"    [bold {_accent_hex()}]{('/' + name):<22}[/] [dim]-[/] {_escape(desc)}"
                 )
 
-        _cprint(f"\n  {_DIM}Tip: Just type your message to chat with Hermes!{_RST}")
-        _cprint(f"  {_DIM}Multi-line: Alt+Enter for a new line{_RST}")
-        _cprint(f"  {_DIM}Draft editor: Ctrl+G (Alt+G in VSCode/Cursor){_RST}")
+        _cprint(f"\n  {_DIM}{_t('cli.banner.help_tip')}{_RST}")
+        _cprint(f"  {_DIM}{_t('cli.banner.multiline_hint')}{_RST}")
+        _cprint(f"  {_DIM}{_t('cli.banner.draft_editor_hint')}{_RST}")
         if _is_termux_environment():
-            _cprint(f"  {_DIM}Attach image: /image {_termux_example_image_path()} or start your prompt with a local image path{_RST}\n")
+            _cprint(f"  {_DIM}{_t('cli.banner.paste_image_termux_hint')}{_RST}\n")
         else:
-            _cprint(f"  {_DIM}Paste image: Alt+V (or /paste){_RST}\n")
+            _cprint(f"  {_DIM}{_t('cli.banner.paste_image_hint')}{_RST}\n")
     
     def show_tools(self):
         """Display available tools with kawaii ASCII art."""
@@ -10918,10 +10919,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         try:
             from hermes_cli.skin_engine import get_active_skin
             _welcome_skin = get_active_skin()
-            _welcome_text = _welcome_skin.get_branding("welcome", "Welcome to Hermes Agent! Type your message or /help for commands.")
+            _welcome_text = _welcome_skin.get_branding("welcome", _t('cli.banner.welcome'))
             _welcome_color = _welcome_skin.get_color("banner_text", "#FFF8DC")
         except Exception:
-            _welcome_text = "Welcome to Hermes Agent! Type your message or /help for commands."
+            _welcome_text = _t('cli.banner.welcome')
             _welcome_color = "#FFF8DC"
         self._console_print(f"[{_welcome_color}]{_welcome_text}[/]")
 

@@ -138,6 +138,15 @@ def _locales_dir() -> Path:
     return source_dir
 
 
+def _user_locales_dir() -> Path:
+    """Return the user locale overlay directory (~/.hermes/locale/).
+
+    This directory is outside the Hermes repo and survives ``hermes update``.
+    """
+    import hermes_constants
+    return Path(hermes_constants.get_hermes_home()) / "locale"
+
+
 def _normalize_lang(value: Any) -> str:
     """Normalize a user-supplied language value to a supported code.
 
@@ -192,6 +201,19 @@ def _load_catalog(lang: str) -> dict[str, str]:
 
     flat: dict[str, str] = {}
     _flatten_into(raw, "", flat)
+
+    # User locale overlay: ~/.hermes/locale/<lang>.yaml overrides official keys.
+    # This lets users maintain translations that survive `hermes update`.
+    user_catalog_path = _user_locales_dir() / f"{lang}.yaml"
+    if user_catalog_path.is_file():
+        try:
+            import yaml
+            with user_catalog_path.open("r", encoding="utf-8") as f:
+                user_raw = yaml.safe_load(f) or {}
+            _flatten_into(user_raw, "", flat)
+        except Exception as exc:
+            logger.debug("Failed to load user locale %s: %s", user_catalog_path, exc)
+
     with _catalog_lock:
         _catalog_cache[lang] = flat
     return flat

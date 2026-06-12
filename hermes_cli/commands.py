@@ -18,8 +18,10 @@ import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from hermes_constants import get_hermes_home
 from utils import is_truthy_value
 
 logger = logging.getLogger(__name__)
@@ -1802,6 +1804,20 @@ class SlashCommandCompleter(Completer):
 
         word = text[1:]
 
+        # Load translated command descriptions from user locale
+        _t_cmd = {}
+        try:
+            from agent.i18n import get_language
+            if get_language() not in (None, "", "en"):
+                lang = get_language()
+                _p = Path(get_hermes_home()) / "locale" / f"commands_{lang}.json"
+                if _p.exists():
+                    import json
+                    _t_cmd = json.loads(_p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+
         for cmd, desc in COMMANDS.items():
             if not self._command_allowed(cmd):
                 continue
@@ -1811,7 +1827,7 @@ class SlashCommandCompleter(Completer):
                     self._completion_text(cmd_name, word),
                     start_position=-len(word),
                     display=cmd,
-                    display_meta=desc,
+                    display_meta=_t_cmd.get(cmd, desc),
                 )
 
         for cmd, info in self._iter_skill_bundles().items():
